@@ -1,0 +1,85 @@
+6-5. 알고리즘 코드
+package domain.spot.entity;
+import domain.car.entity.Car;
+import domain.spot.exception.NoCarParkedException;
+import domain.spot.exception.SpotAlreadyOccupiedException;
+import entity.BaseEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.OneToOne;
+import jakarta.persistence.Table;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+@Entity
+@Getter
+@Builder
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@AllArgsConstructor(access = AccessLevel.PROTECTED)
+@Table(name = "Spot")
+public class Spot extends BaseEntity {
+@Id
+@GeneratedValue(strategy = GenerationType.IDENTITY)
+@Column(name = "spot_id")
+private Long spotId;
+@Column(name = "spot_name")
+private String spotName;
+@Column(name = "is_full")
+private Boolean isFull;
+@OneToOne(fetch = FetchType.LAZY)
+@JoinColumn(name = "car_id")
+private Car car;
+// Spot 상태 업데이트
+public void updateSpot(Car car, Boolean isFull) {
+this.car = car;
+this.isFull = isFull; }
+ // 주차 자리가 차 있으면 오류 응답 - 해당 주차 공간은 이미 사용중입니다. public void checkIsFull() { if (isFull) { throw new SpotAlreadyOccupiedException(); } } // 주차 자리가 비어 있으면 오류 응답 - 해당 자리에 주차된 차가 없습니다. public void checkIsEmpty() { if (!isFull) { throw new NoCarParkedException(); } }
+}
+package com.project.dto;
+import com.project.constant.CarType;
+import java.time.LocalDateTime;
+public record ParkingRecordResDto( Long recordId, String licensePlate, LocalDateTime expectedEntryAt, LocalDateTime expectedDepartureAt, LocalDateTime reservationConfirmedAt, LocalDateTime entryAt, boolean isReservationConfirmed, CarType carType
+) {}
+package com.project.service;
+import com.project.constant.CarType;
+import com.project.dto.GetSpotRecommendResDto;
+import com.project.dto.ParkingRecordResDto;
+import domain.spot.entity.Spot;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import org.springframework.stereotype.Component;
+@Component
+public class SpotScheduler {
+ public List<GetSpotRecommendResDto>
+assignSpots(List<ParkingRecordResDto> records, List<Spot> spots, String
+thisCarTypeStr) { CarType thisCarType = CarType.valueOf(thisCarTypeStr.toUpperCase()); List<GetSpotRecommendResDto> results = new ArrayList<>();
+ // 1순위: 거리 기반 - 가장 가까운 빈 자리 추천 - 최대 1개
+ spots.stream() .filter(s -> !s.getIsFull() && !isAlreadyInResults(results, s)) .findFirst() .ifPresent(s -> results.add(new
+GetSpotRecommendResDto(s.getSpotName(), "가장 가까운 빈 자리 (1순위)")));
+ // 2순위: 분산 주차 - 양옆이 비어 있는 자리 추천 - 최대 1개
+ for (int i = 0; i < spots.size(); i++) { Spot spot = spots.get(i); if (!spot.getIsFull() && isDistributed(spots, i) &&
+!isAlreadyInResults(results, spot)) { results.add(new GetSpotRecommendResDto(spot.getSpotName(), " 분산 주차 배치 (2순위)")); break; } }
+ // 3순위: 차량 크기 기반 배치 - 최대 1개
+ for (int i = 0; i < spots.size(); i++) { Spot spot = spots.get(i); if (!spot.getIsFull() && isGoodSizeMatch(spots, i, thisCarType) &&
+!isAlreadyInResults(results, spot)) { results.add(new GetSpotRecommendResDto(spot.getSpotName(),
+getReasonByCarType(thisCarType))); break; } }
+ return results; }
+ private boolean isAlreadyInResults(List<GetSpotRecommendResDto> results,
+Spot spot) { return results.stream().anyMatch(r ->
+r.spotName().equals(spot.getSpotName())); }
+ private boolean isDistributed(List<Spot> spots, int i) { boolean left = i == 0 || !spots.get(i - 1).getIsFull(); boolean right = i == spots.size() - 1 || !spots.get(i + 1).getIsFull(); return left && right; }
+ private boolean isGoodSizeMatch(List<Spot> spots, int i, CarType type) { if (type == CarType.COMPACT) { boolean leftLarge = i > 0 && isLarge(spots.get(i - 1)); boolean rightLarge = i < spots.size() - 1 && isLarge(spots.get(i +
+1)); return leftLarge && rightLarge; } return true; // MIDSIZE, FULLSIZE, TRUCK 등은 빈 자리면 추천 가능
+ }
+ private boolean isLarge(Spot s) { return s.getIsFull() && s.getCar() != null && (s.getCar().getCarType() == CarType.FULLSIZE ||
+s.getCar().getCarType() == CarType.TRUCK); }
+ private String getReasonByCarType(CarType carType) { return switch (carType) { case COMPACT -> "소형차 배치 (3순위)"; case MIDSIZE -> "중형차 배치 (3순위)"; case FULLSIZE, TRUCK -> "대형차/화물차 배치 (3순위)"; }; }
+}
